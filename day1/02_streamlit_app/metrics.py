@@ -1,38 +1,26 @@
-# metrics.py
 import streamlit as st
 import nltk
 from janome.tokenizer import Tokenizer
 import re
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.feature_extraction.text import TfidfVectorizer
+# 追加モジュール
+import language_tool_python
+from collections import Counter
 
-# NLTKのヘルパー関数（エラー時フォールバック付き）
+# language-tool-python の初期化
 try:
-    nltk.download('punkt', quiet=True)
-    from nltk.translate.bleu_score import sentence_bleu as nltk_sentence_bleu
-    from nltk.tokenize import word_tokenize as nltk_word_tokenize
-    print("NLTK loaded successfully.") # デバッグ用
+    # 日本語対応の文法チェッカーを初期化
+    # デフォルトでは英語なので、日本語の場合は言語を指定
+    language_tool = language_tool_python.LanguageTool('ja-JP')
+    print("LanguageTool loaded successfully.") # デバッグ用
 except Exception as e:
-    st.warning(f"NLTKの初期化中にエラーが発生しました: {e}\n簡易的な代替関数を使用します。")
-    def nltk_word_tokenize(text):
-        return text.split()
-    def nltk_sentence_bleu(references, candidate):
-        # 簡易BLEUスコア（完全一致/部分一致）
-        ref_words = set(references[0])
-        cand_words = set(candidate)
-        common_words = ref_words.intersection(cand_words)
-        precision = len(common_words) / len(cand_words) if cand_words else 0
-        recall = len(common_words) / len(ref_words) if ref_words else 0
-        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
-        return f1 # F1スコアを返す（簡易的な代替）
-
-def initialize_nltk():
-    """NLTKのデータダウンロードを試みる関数"""
-    try:
-        nltk.download('punkt', quiet=True)
-        print("NLTK Punkt data checked/downloaded.") # デバッグ用
-    except Exception as e:
-        st.error(f"NLTKデータのダウンロードに失敗しました: {e}")
+    st.warning(f"LanguageToolの初期化中にエラーが発生しました: {e}\n文法チェックは無効になります。")
+    # ダミー関数を作成
+    class DummyLanguageTool:
+        def check(self, text):
+            return []
+    language_tool = DummyLanguageTool()
 
 def calculate_metrics(answer, correct_answer):
     """回答と正解から評価指標を計算する"""
@@ -40,17 +28,55 @@ def calculate_metrics(answer, correct_answer):
     bleu_score = 0.0
     similarity_score = 0.0
     relevance_score = 0.0
+    grammar_score = 0.0  # 追加: 文法性スコア
+    diversity_score = 0.0  # 追加: 多様性スコア
 
     if not answer: # 回答がない場合は計算しない
-        return bleu_score, similarity_score, word_count, relevance_score
+        return bleu_score, similarity_score, word_count, relevance_score, grammar_score, diversity_score
 
     # 単語数のカウント
     tokenizer = Tokenizer()
     tokens = list(tokenizer.tokenize(answer))  # ← list() でイテレータをリストに変換
     word_count = len(tokens)
+    
+    # 追加: 文法性スコアの計算
+    try:
+        errors = language_tool.check(answer)
+        # エラーが少ないほど高スコア（1.0が満点）
+        if len(answer) > 0:
+            # エラー文字数の割合を計算し、それを1から引く
+            error_chars = sum(len(err.context) for err in errors)
+            grammar_score = max(0, 1.0 - (error_chars / len(answer)))
+        else:
+            grammar_score = 0.0
+    except Exception as e:
+        # st.warning(f"文法スコア計算エラー: {e}")
+        grammar_score = 0.0  # エラー時は0
+    
+    # 追加: 多様性スコアの計算 (Type-Token Ratio)
+    try:
+        # トークンから表層形を抽出
+        token_surfaces = [token.surface for token in tokens]
+        if token_surfaces:
+            # 重複しない単語の数 / 全単語数
+            unique_tokens = set(token_surfaces)
+            diversity_score = len(unique_tokens) / len(token_surfaces)
+            
+            # より高度なバージョン: エントロピーベースの多様性
+            # token_counts = Counter(token_surfaces)
+            # total = len(token_surfaces)
+            # entropy = -sum((count/total) * math.log2(count/total) for count in token_counts.values())
+            # max_entropy = math.log2(total) if total > 0 else 0
+            # diversity_score = entropy / max_entropy if max_entropy > 0 else 0
+        else:
+            diversity_score = 0.0
+    except Exception as e:
+        # st.warning(f"多様性スコア計算エラー: {e}")
+        diversity_score = 0.0  # エラー時は0
 
     # 正解がある場合のみBLEUと類似度を計算
     if correct_answer:
+        # 既存のコード...
         answer_lower = answer.lower()
         correct_answer_lower = correct_answer.lower()
 
@@ -93,7 +119,7 @@ def calculate_metrics(answer, correct_answer):
             # st.warning(f"関連性スコア計算エラー: {e}")
             relevance_score = 0.0 # エラー時は0
 
-    return bleu_score, similarity_score, word_count, relevance_score
+    return bleu_score, similarity_score, word_count, relevance_score, grammar_score, diversity_score
 
 def get_metrics_descriptions():
     """評価指標の説明を返す"""
@@ -104,5 +130,7 @@ def get_metrics_descriptions():
         "類似度スコア (similarity_score)": "TF-IDFベクトルのコサイン類似度による、正解と回答の意味的な類似性 (0〜1の値)",
         "単語数 (word_count)": "回答に含まれる単語の数。情報量や詳細さの指標",
         "関連性スコア (relevance_score)": "正解と回答の共通単語の割合。トピックの関連性を表す (0〜1の値)",
-        "効率性スコア (efficiency_score)": "正確性を応答時間で割った値。高速で正確な回答ほど高スコア"
+        "効率性スコア (efficiency_score)": "正確性を応答時間で割った値。高速で正確な回答ほど高スコア",
+        "文法性スコア (grammar_score)": "文法的な正確さの指標。文法エラーが少ないほど高スコア (0〜1の値)",
+        "多様性スコア (diversity_score)": "語彙の多様性を表すType-Token Ratio (TTR)。重複せず使われている単語の割合 (0〜1の値)"
     }
