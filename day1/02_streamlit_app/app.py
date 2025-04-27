@@ -51,16 +51,16 @@ st.write("Gemmaモデルを使用したチャットボットです。回答に�
 st.markdown("---")
 
 # --- サイドバー ---
-st.sidebar.title("ナビゲーション")
+st.sidebar.title("ナビ")
 # セッション状態を使用して選択ページを保持
 if 'page' not in st.session_state:
     st.session_state.page = "チャット" # デフォルトページ
 
 page = st.sidebar.radio(
     "ページ選択",
-    ["チャット", "履歴閲覧", "サンプルデータ管理"],
+    ["チャット", "履歴閲覧", "サンプルデータ管理", "Q&A"],
     key="page_selector",
-    index=["チャット", "履歴閲覧", "サンプルデータ管理"].index(st.session_state.page), # 現在のページを選択状態にする
+    index=["チャット", "履歴閲覧", "サンプルデータ管理", "Q&A"].index(st.session_state.page), # 現在のページを選択状態にする
     on_change=lambda: setattr(st.session_state, 'page', st.session_state.page_selector) # 選択変更時に状態を更新
 )
 
@@ -75,7 +75,9 @@ elif st.session_state.page == "履歴閲覧":
     ui.display_history_page()
 elif st.session_state.page == "サンプルデータ管理":
     ui.display_data_page()
+elif st.session_state.page == "Q&A":
+    ui.display_data_page()
 
 # --- フッターなど（任意） ---
 st.sidebar.markdown("---")
-st.sidebar.info("開発者: [Your Name]")
+st.sidebar.info("開発者: [Kakurosu]")
