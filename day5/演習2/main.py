@@ -11,6 +11,7 @@ import pickle
 import time
 import great_expectations as gx
 
+
 class DataLoader:
     """データロードを行うクラス"""
 
@@ -20,8 +21,9 @@ class DataLoader:
         if path:
             return pd.read_csv(path)
         else:
-            # ローカルのファイル
-            local_path = "data/Titanic.csv"
+            # 絶対パスでデータセットを指定
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            local_path = os.path.join(current_dir, "data", "Titanic.csv")
             if os.path.exists(local_path):
                 return pd.read_csv(local_path)
 
@@ -59,18 +61,10 @@ class DataValidator:
         if not isinstance(data, pd.DataFrame):
             return False, ["データはpd.DataFrameである必要があります"]
 
-        # Great Expectationsを使用したバリデーション
+        # 基本的なバリデーションを実装（Great Expectationsを使わない）
         try:
-            context = gx.get_context()
-            data_source = context.data_sources.add_pandas("pandas")
-            data_asset = data_source.add_dataframe_asset(name="pd dataframe asset")
-
-            batch_definition = data_asset.add_batch_definition_whole_dataframe(
-                "batch definition"
-            )
-            batch = batch_definition.get_batch(batch_parameters={"dataframe": data})
-
             results = []
+            is_successful = True
 
             # 必須カラムの存在確認
             required_columns = [
@@ -89,34 +83,71 @@ class DataValidator:
                 print(f"警告: 以下のカラムがありません: {missing_columns}")
                 return False, [{"success": False, "missing_columns": missing_columns}]
 
-            expectations = [
-                gx.expectations.ExpectColumnDistinctValuesToBeInSet(
-                    column="Pclass", value_set=[1, 2, 3]
-                ),
-                gx.expectations.ExpectColumnDistinctValuesToBeInSet(
-                    column="Sex", value_set=["male", "female"]
-                ),
-                gx.expectations.ExpectColumnValuesToBeBetween(
-                    column="Age", min_value=0, max_value=100
-                ),
-                gx.expectations.ExpectColumnValuesToBeBetween(
-                    column="Fare", min_value=0, max_value=600
-                ),
-                gx.expectations.ExpectColumnDistinctValuesToBeInSet(
-                    column="Embarked", value_set=["C", "Q", "S", ""]
-                ),
-            ]
+            # Pclassの値チェック
+            if not all(data["Pclass"].isin([1, 2, 3])):
+                results.append(
+                    {
+                        "success": False,
+                        "column": "Pclass",
+                        "message": "値は1, 2, 3のいずれかである必要があります",
+                    }
+                )
+                is_successful = False
 
-            for expectation in expectations:
-                result = batch.validate(expectation)
-                results.append(result)
+            # Sexの値チェック
+            if not all(data["Sex"].isin(["male", "female"])):
+                results.append(
+                    {
+                        "success": False,
+                        "column": "Sex",
+                        "message": "値はmale, femaleのいずれかである必要があります",
+                    }
+                )
+                is_successful = False
 
-            # すべての検証が成功したかチェック
-            is_successful = all(result.success for result in results)
+            # Ageの値チェック
+            if not all(
+                (data["Age"].isna()) | ((data["Age"] >= 0) & (data["Age"] <= 100))
+            ):
+                results.append(
+                    {
+                        "success": False,
+                        "column": "Age",
+                        "message": "値は0から100の間である必要があります",
+                    }
+                )
+                is_successful = False
+
+            # Fareの値チェック
+            if not all(
+                (data["Fare"].isna()) | ((data["Fare"] >= 0) & (data["Fare"] <= 600))
+            ):
+                results.append(
+                    {
+                        "success": False,
+                        "column": "Fare",
+                        "message": "値は0から600の間である必要があります",
+                    }
+                )
+                is_successful = False
+
+            # Embarkedの値チェック
+            if not all(
+                (data["Embarked"].isna()) | (data["Embarked"].isin(["C", "Q", "S", ""]))
+            ):
+                results.append(
+                    {
+                        "success": False,
+                        "column": "Embarked",
+                        "message": "値はC, Q, S, または空白である必要があります",
+                    }
+                )
+                is_successful = False
+
             return is_successful, results
 
         except Exception as e:
-            print(f"Great Expectations検証エラー: {e}")
+            print(f"データ検証エラー: {e}")
             return False, [{"success": False, "error": str(e)}]
 
 
@@ -258,8 +289,13 @@ if __name__ == "__main__":
     print(f"データ検証結果: {'成功' if success else '失敗'}")
     for result in results:
         # "success": falseの場合はエラーメッセージを表示
-        if not result["success"]:
-            print(f"異常タイプ: {result['expectation_config']['type']}, 結果: {result}")
+        if isinstance(result, dict) and not result.get("success", True):
+            if "expectation_config" in result:
+                print(
+                    f"異常タイプ: {result['expectation_config']['type']}, 結果: {result}"
+                )
+            else:
+                print(f"異常: {result}")
     if not success:
         print("データ検証に失敗しました。処理を終了します。")
         exit(1)
@@ -285,3 +321,35 @@ if __name__ == "__main__":
     # ベースラインとの比較
     baseline_ok = ModelTester.compare_with_baseline(metrics)
     print(f"ベースライン比較: {'合格' if baseline_ok else '不合格'}")
+
+
+def test_inference_speed_and_accuracy():
+    """推論時間と精度をチェックする関数"""
+    # データロード
+    data = DataLoader.load_titanic_data()
+    X, y = DataLoader.preprocess_titanic_data(data)
+
+    # データを訓練用とテスト用に分割
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+
+    # モデルのトレーニング
+    model = ModelTester.train_model(X_train, y_train)
+
+    # 推論時間と精度の測定
+    start_time = time.time()
+    y_pred = model.predict(X_test)
+    inference_time = time.time() - start_time
+
+    # 精度の計算
+    accuracy = accuracy_score(y_test, y_pred)
+
+    print(f"推論時間: {inference_time:.4f}秒")
+    print(f"精度: {accuracy:.4f}")
+
+    # 検証
+    assert inference_time < 1.0, f"推論時間が長すぎます: {inference_time}秒"
+    assert accuracy >= 0.75, f"精度が低すぎます: {accuracy}"
+
+    return {"inference_time": inference_time, "accuracy": accuracy}
